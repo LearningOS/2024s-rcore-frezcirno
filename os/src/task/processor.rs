@@ -53,6 +53,8 @@ lazy_static! {
     pub static ref PROCESSOR: UPSafeCell<Processor> = unsafe { UPSafeCell::new(Processor::new()) };
 }
 
+static BIG_STRIDE: usize = 0x100000;
+
 ///The main part of process execution and scheduling
 ///Loop `fetch_task` to get the process that needs to run, and switch the process through `__switch`
 pub fn run_tasks() {
@@ -67,6 +69,7 @@ pub fn run_tasks() {
             if task_inner.first_run == 0 {
                 task_inner.first_run = get_time_ms();
             }
+            task_inner.stride += BIG_STRIDE / task_inner.priority;
             // release coming task_inner manually
             drop(task_inner);
             // release coming task TCB manually
