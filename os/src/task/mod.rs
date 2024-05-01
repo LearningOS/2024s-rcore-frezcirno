@@ -14,8 +14,11 @@ mod switch;
 #[allow(clippy::module_inception)]
 mod task;
 
+use crate::config::{MAX_SYSCALL_NUM, PAGE_SIZE};
 use crate::loader::{get_app_data, get_num_app};
+use crate::mm::VirtAddr;
 use crate::sync::UPSafeCell;
+use crate::timer::get_time_ms;
 use crate::trap::TrapContext;
 use alloc::vec::Vec;
 use lazy_static::*;
@@ -79,6 +82,7 @@ impl TaskManager {
         let mut inner = self.inner.exclusive_access();
         let next_task = &mut inner.tasks[0];
         next_task.task_status = TaskStatus::Running;
+        next_task.first_run = get_time_ms();
         let next_task_cx_ptr = &next_task.task_cx as *const TaskContext;
         drop(inner);
         let mut _unused = TaskContext::zero_init();
@@ -140,6 +144,9 @@ impl TaskManager {
             let mut inner = self.inner.exclusive_access();
             let current = inner.current_task;
             inner.tasks[next].task_status = TaskStatus::Running;
+            if inner.tasks[current].first_run == 0 {
+                inner.tasks[current].first_run = get_time_ms();
+            }
             inner.current_task = next;
             let current_task_cx_ptr = &mut inner.tasks[current].task_cx as *mut TaskContext;
             let next_task_cx_ptr = &inner.tasks[next].task_cx as *const TaskContext;
@@ -201,4 +208,62 @@ pub fn current_trap_cx() -> &'static mut TrapContext {
 /// Change the current 'Running' task's program break
 pub fn change_program_brk(size: i32) -> Option<usize> {
     TASK_MANAGER.change_current_program_brk(size)
+}
+
+/// Record the syscall times of the current task.
+pub fn record_syscall(id: usize) {
+    let mut inner = TASK_MANAGER.inner.exclusive_access();
+    let current = inner.current_task;
+    inner.tasks[current].syscall_times[id] += 1;
+}
+
+/// Get the current task's status, syscall times and first run time.
+pub fn get_current_task() -> (TaskStatus, [u32; MAX_SYSCALL_NUM], usize) {
+    let inner = TASK_MANAGER.inner.exclusive_access();
+    let current = inner.current_task;
+    let task = &inner.tasks[current];
+    (task.task_status, task.syscall_times, task.first_run)
+}
+
+/// Map memory
+pub fn mmap(start: usize, len: usize, prot: usize) -> isize {
+    let mut inner = TASK_MANAGER.inner.exclusive_access();
+    let current = inner.current_task;
+    inner.tasks[current]
+        .memory_set
+        .mmap(start.into(), len, prot)
+}
+
+/// Unmap memory
+pub fn munmap(start: usize, len: usize) -> isize {
+    let mut inner = TASK_MANAGER.inner.exclusive_access();
+    let current = inner.current_task;
+    inner.tasks[current].memory_set.munmap(start.into(), len)
+}
+
+/// Copy data from kernel to user space
+pub fn copy_to_user(user: usize, kern: &[u8]) {
+    let tm = TASK_MANAGER.inner.exclusive_access();
+    let task = &tm.tasks[tm.current_task];
+
+    let mut user_pos = user;
+    let mut need_copy = kern.len();
+
+    while need_copy > 0 {
+        let va = VirtAddr::from(user_pos);
+        let vpn = va.floor();
+        let vpoff = va.page_offset();
+
+        let pte = task.memory_set.translate(vpn).unwrap();
+        let ppn = pte.ppn();
+        let dst = ppn.get_bytes_array()[vpoff..].as_mut();
+
+        let src = &kern[kern.len() - need_copy..];
+
+        let len = dst.len().min(need_copy).min(PAGE_SIZE - vpoff);
+        dst[..len].copy_from_slice(&src[..len]);
+
+        user_pos += len;
+        need_copy -= len;
+    }
 }
