@@ -7,7 +7,10 @@
 use super::__switch;
 use super::{fetch_task, TaskStatus};
 use super::{TaskContext, TaskControlBlock};
+use crate::config::{MAX_SYSCALL_NUM, PAGE_SIZE};
+use crate::mm::VirtAddr;
 use crate::sync::UPSafeCell;
+use crate::timer::get_time_ms;
 use crate::trap::TrapContext;
 use alloc::sync::Arc;
 use lazy_static::*;
@@ -61,6 +64,9 @@ pub fn run_tasks() {
             let mut task_inner = task.inner_exclusive_access();
             let next_task_cx_ptr = &task_inner.task_cx as *const TaskContext;
             task_inner.task_status = TaskStatus::Running;
+            if task_inner.first_run == 0 {
+                task_inner.first_run = get_time_ms();
+            }
             // release coming task_inner manually
             drop(task_inner);
             // release coming task TCB manually
@@ -107,5 +113,63 @@ pub fn schedule(switched_task_cx_ptr: *mut TaskContext) {
     drop(processor);
     unsafe {
         __switch(switched_task_cx_ptr, idle_task_cx_ptr);
+    }
+}
+
+/// Record the syscall times of the current task.
+pub fn record_syscall(id: usize) {
+    let current = current_task().unwrap();
+    current.inner_exclusive_access().syscall_times[id] += 1;
+}
+
+/// Get the current task's status, syscall times and first run time.
+pub fn get_current_task() -> (TaskStatus, [u32; MAX_SYSCALL_NUM], usize) {
+    let current = current_task().unwrap();
+    let current = current.inner_exclusive_access();
+    (
+        current.task_status,
+        current.syscall_times,
+        current.first_run,
+    )
+}
+
+/// Map memory
+pub fn mmap(start: usize, len: usize, prot: usize) -> isize {
+    let current = current_task().unwrap();
+    let mut current = current.inner_exclusive_access();
+    current.memory_set.mmap(start.into(), len, prot)
+}
+
+/// Unmap memory
+pub fn munmap(start: usize, len: usize) -> isize {
+    let current = current_task().unwrap();
+    let mut current = current.inner_exclusive_access();
+    current.memory_set.munmap(start.into(), len)
+}
+
+/// Copy data from kernel to user space
+pub fn copy_to_user(user: usize, kern: &[u8]) {
+    let current = current_task().unwrap();
+    let current = current.inner_exclusive_access();
+
+    let mut user_pos = user;
+    let mut need_copy = kern.len();
+
+    while need_copy > 0 {
+        let va = VirtAddr::from(user_pos);
+        let vpn = va.floor();
+        let vpoff = va.page_offset();
+
+        let pte = current.memory_set.translate(vpn).unwrap();
+        let ppn = pte.ppn();
+        let dst = ppn.get_bytes_array()[vpoff..].as_mut();
+
+        let src = &kern[kern.len() - need_copy..];
+
+        let len = dst.len().min(need_copy).min(PAGE_SIZE - vpoff);
+        dst[..len].copy_from_slice(&src[..len]);
+
+        user_pos += len;
+        need_copy -= len;
     }
 }
