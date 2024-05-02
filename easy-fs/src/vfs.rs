@@ -8,6 +8,7 @@ use alloc::vec::Vec;
 use spin::{Mutex, MutexGuard};
 /// Virtual filesystem layer over easy-fs
 pub struct Inode {
+    ino: usize,
     block_id: usize,
     block_offset: usize,
     fs: Arc<Mutex<EasyFileSystem>>,
@@ -17,12 +18,14 @@ pub struct Inode {
 impl Inode {
     /// Create a vfs inode
     pub fn new(
+        ino: usize,
         block_id: u32,
         block_offset: usize,
         fs: Arc<Mutex<EasyFileSystem>>,
         block_device: Arc<dyn BlockDevice>,
     ) -> Self {
         Self {
+            ino,
             block_id: block_id as usize,
             block_offset,
             fs,
@@ -65,12 +68,24 @@ impl Inode {
             self.find_inode_id(name, disk_inode).map(|inode_id| {
                 let (block_id, block_offset) = fs.get_disk_inode_pos(inode_id);
                 Arc::new(Self::new(
+                    inode_id as usize,
                     block_id,
                     block_offset,
                     self.fs.clone(),
                     self.block_device.clone(),
                 ))
             })
+        })
+    }
+    /// Get the stat of current inode
+    pub fn stat(&self) -> (usize, bool, bool, u32) {
+        self.read_disk_inode(|disk_inode| {
+            (
+                self.ino,
+                disk_inode.is_file(),
+                disk_inode.is_dir(),
+                disk_inode.indirect1,
+            )
         })
     }
     /// Increase the size of a disk inode
@@ -131,6 +146,7 @@ impl Inode {
         block_cache_sync_all();
         // return inode
         Some(Arc::new(Self::new(
+            new_inode_id as usize,
             block_id,
             block_offset,
             self.fs.clone(),

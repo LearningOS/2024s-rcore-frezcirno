@@ -68,7 +68,7 @@ impl SuperBlock {
     }
 }
 /// Type of a disk inode
-#[derive(PartialEq)]
+#[derive(PartialEq, Clone, Copy)]
 pub enum DiskInodeType {
     File,
     Directory,
@@ -97,6 +97,10 @@ impl DiskInode {
         self.indirect1 = 0;
         self.indirect2 = 0;
         self.type_ = type_;
+    }
+    /// Get the type of current disk inode
+    pub fn ftype(&self) -> DiskInodeType {
+        self.type_
     }
     /// Whether this inode is a directory
     pub fn is_dir(&self) -> bool {

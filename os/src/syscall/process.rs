@@ -220,13 +220,13 @@ pub fn sys_spawn(path: *const u8) -> isize {
     trace!("kernel:pid[{}] sys_spawn", current_task().unwrap().pid.0);
     let token = current_user_token();
     let path = translated_str(token, path);
-    let app = match get_app_data_by_name(path.as_str()) {
-        Some(app) => app,
+    let app_inode = match open_file(path.as_str(), OpenFlags::RDONLY) {
+        Some(inode) => inode,
         None => return -1,
     };
-
+    let app = app_inode.read_all();
     let current = current_task().unwrap();
-    let new_task = current.spawn(app);
+    let new_task = current.spawn(&app);
     let new_pid = new_task.pid.0;
 
     // add new task to scheduler

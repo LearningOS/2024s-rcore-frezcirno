@@ -193,6 +193,7 @@ impl TaskControlBlock {
                     parent: Some(Arc::downgrade(self)),
                     children: Vec::new(),
                     exit_code: 0,
+                    fd_table: Vec::new(),
                     heap_bottom: user_sp,
                     program_brk: user_sp,
                     syscall_times: [0; MAX_SYSCALL_NUM],
