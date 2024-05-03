@@ -5,9 +5,14 @@ use crate::task::TaskControlBlock;
 use crate::task::{block_current_and_run_next, suspend_current_and_run_next};
 use crate::task::{current_task, wakeup_task};
 use alloc::{collections::VecDeque, sync::Arc};
+use core::sync::atomic;
+
+pub static mut NEXT_RES_ID: atomic::AtomicU32 = atomic::AtomicU32::new(0);
 
 /// Mutex trait
 pub trait Mutex: Sync + Send {
+    /// Get the mutex id
+    fn id(&self) -> usize;
     /// Lock the mutex
     fn lock(&self);
     /// Unlock the mutex
@@ -16,6 +21,7 @@ pub trait Mutex: Sync + Send {
 
 /// Spinlock Mutex struct
 pub struct MutexSpin {
+    id: usize,
     locked: UPSafeCell<bool>,
 }
 
@@ -23,12 +29,17 @@ impl MutexSpin {
     /// Create a new spinlock mutex
     pub fn new() -> Self {
         Self {
+            id: unsafe { NEXT_RES_ID.fetch_add(1, atomic::Ordering::SeqCst) as usize },
             locked: unsafe { UPSafeCell::new(false) },
         }
     }
 }
 
 impl Mutex for MutexSpin {
+    /// Get the mutex id
+    fn id(&self) -> usize {
+        self.id
+    }
     /// Lock the spinlock mutex
     fn lock(&self) {
         trace!("kernel: MutexSpin::lock");
@@ -54,6 +65,7 @@ impl Mutex for MutexSpin {
 
 /// Blocking Mutex struct
 pub struct MutexBlocking {
+    id: usize,
     inner: UPSafeCell<MutexBlockingInner>,
 }
 
@@ -67,6 +79,7 @@ impl MutexBlocking {
     pub fn new() -> Self {
         trace!("kernel: MutexBlocking::new");
         Self {
+            id: unsafe { NEXT_RES_ID.fetch_add(1, atomic::Ordering::SeqCst) as usize },
             inner: unsafe {
                 UPSafeCell::new(MutexBlockingInner {
                     locked: false,
@@ -78,6 +91,10 @@ impl MutexBlocking {
 }
 
 impl Mutex for MutexBlocking {
+    /// Get the mutex id
+    fn id(&self) -> usize {
+        self.id
+    }
     /// lock the blocking mutex
     fn lock(&self) {
         trace!("kernel: MutexBlocking::lock");

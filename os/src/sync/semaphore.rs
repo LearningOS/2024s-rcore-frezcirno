@@ -1,11 +1,15 @@
 //! Semaphore
 
+use crate::sync::mutex::NEXT_RES_ID;
 use crate::sync::UPSafeCell;
 use crate::task::{block_current_and_run_next, current_task, wakeup_task, TaskControlBlock};
 use alloc::{collections::VecDeque, sync::Arc};
+use core::sync::atomic;
 
 /// semaphore structure
 pub struct Semaphore {
+    /// semaphore id
+    pub id: usize,
     /// semaphore inner
     pub inner: UPSafeCell<SemaphoreInner>,
 }
@@ -20,6 +24,7 @@ impl Semaphore {
     pub fn new(res_count: usize) -> Self {
         trace!("kernel: Semaphore::new");
         Self {
+            id: unsafe { NEXT_RES_ID.fetch_add(1, atomic::Ordering::SeqCst) as usize },
             inner: unsafe {
                 UPSafeCell::new(SemaphoreInner {
                     count: res_count as isize,
